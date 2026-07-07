@@ -788,7 +788,15 @@ impl ViewportBuilder {
             && Some(new_fullscreen) != self.fullscreen
         {
             self.fullscreen = Some(new_fullscreen);
-            commands.push(ViewportCommand::Fullscreen(new_fullscreen));
+            // When a monitor change is emitted in the same patch, `SetMonitor` already
+            // implies borderless fullscreen on that monitor. Emitting `Fullscreen(true)`
+            // first would fullscreen on the *current* monitor, and on X11 the window
+            // manager then refuses to move the already-fullscreen window, so the later
+            // `SetMonitor` would be ignored.
+            let monitor_changing = new_monitor.is_some() && new_monitor != self.monitor;
+            if !(new_fullscreen && monitor_changing) {
+                commands.push(ViewportCommand::Fullscreen(new_fullscreen));
+            }
         }
 
         if let Some(new_maximized) = new_maximized

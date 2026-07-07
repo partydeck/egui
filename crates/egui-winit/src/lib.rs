@@ -1945,10 +1945,29 @@ pub fn create_window(
 
     let mut window_attributes = create_winit_window_attributes(egui_ctx, viewport_builder.clone());
 
-    // Resolve target monitor index → MonitorHandle, so the window is created
-    // directly in borderless fullscreen on the requested output. This is the
-    // only reliable way to target a specific monitor under Wayland, and also
-    // avoids the Mutter race where OuterPosition is ignored pre-mapping.
+    window_attributes =
+        resolve_monitor_in_window_attributes(viewport_builder, event_loop, window_attributes);
+
+    let window = event_loop.create_window(window_attributes)?;
+    apply_viewport_builder_to_window(egui_ctx, &window, viewport_builder);
+    Ok(window)
+}
+
+/// Apply [`ViewportBuilder::monitor`] to already-built [`winit::window::WindowAttributes`]:
+/// resolve the monitor index to a handle and request borderless fullscreen on that monitor,
+/// so the window is created directly on the requested output. This is the only reliable way
+/// to target a specific monitor under Wayland, and also avoids the Mutter race where
+/// `OuterPosition` is ignored pre-mapping.
+///
+/// [`create_window`] does this internally. Backends that construct their windows some other
+/// way (e.g. through glutin in eframe's glow backend) must call this explicitly —
+/// `create_winit_window_attributes` cannot, because it has no `ActiveEventLoop` to
+/// enumerate monitors with.
+pub fn resolve_monitor_in_window_attributes(
+    viewport_builder: &ViewportBuilder,
+    event_loop: &ActiveEventLoop,
+    mut window_attributes: winit::window::WindowAttributes,
+) -> winit::window::WindowAttributes {
     if let Some(idx) = viewport_builder.monitor {
         if let Some(monitor) = event_loop.available_monitors().nth(idx) {
             window_attributes = window_attributes
@@ -1960,10 +1979,7 @@ pub fn create_window(
             );
         }
     }
-
-    let window = event_loop.create_window(window_attributes)?;
-    apply_viewport_builder_to_window(egui_ctx, &window, viewport_builder);
-    Ok(window)
+    window_attributes
 }
 
 pub fn create_winit_window_attributes(

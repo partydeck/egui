@@ -1015,11 +1015,28 @@ impl GlutinWindowContext {
             // we might want to expose this option to users in the future. maybe using an env var or using native_options.
             //
             // The justification for FallbackEgl over PreferEgl is at https://github.com/emilk/egui/pull/2526#issuecomment-1400229576 .
-            .with_preference(glutin_winit::ApiPreference::FallbackEgl)
-            .with_window_attributes(Some(egui_winit::create_winit_window_attributes(
-                egui_ctx,
-                viewport_builder.clone(),
-            )));
+            //
+            // PARTYDECK PATCH: PreferEgl (= EGL first on every platform, GLX only
+            // as fallback). The PipeWire DMA-BUF import (EGL_EXT_image_dma_buf_import)
+            // requires the rendering context to be an EGL context; GLX has no
+            // equivalent. Upstream's FallbackEgl default targets 2023-era driver
+            // quirks that don't apply to a Linux-only, Mesa-first application.
+            .with_preference(glutin_winit::ApiPreference::PreferEgl)
+            .with_window_attributes(Some(
+                // PARTYDECK PATCH: `create_winit_window_attributes` skips
+                // `ViewportBuilder::monitor` (it has no event loop to resolve the
+                // index with), and unlike the wgpu backend we never go through
+                // `egui_winit::create_window`, so without this the field is
+                // silently dropped on the glow backend.
+                egui_winit::resolve_monitor_in_window_attributes(
+                    &viewport_builder,
+                    event_loop,
+                    egui_winit::create_winit_window_attributes(
+                        egui_ctx,
+                        viewport_builder.clone(),
+                    ),
+                ),
+            ));
 
         let (window, gl_config) = {
             profiling::scope!("DisplayBuilder::build");
@@ -1186,6 +1203,13 @@ impl GlutinWindowContext {
             let window_attributes = egui_winit::create_winit_window_attributes(
                 &self.egui_ctx,
                 viewport.builder.clone(),
+            );
+            // PARTYDECK PATCH: same as the root window — honor
+            // `ViewportBuilder::monitor`, which the glutin path otherwise drops.
+            let window_attributes = egui_winit::resolve_monitor_in_window_attributes(
+                &viewport.builder,
+                event_loop,
+                window_attributes,
             );
             if window_attributes.transparent()
                 && self.gl_config.supports_transparency() == Some(false)

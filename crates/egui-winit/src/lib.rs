@@ -1838,6 +1838,18 @@ fn process_viewport_command(
                 );
             }
         }
+        ViewportCommand::SetMonitorName(ref name) => {
+            let monitor = window
+                .available_monitors()
+                .find(|monitor| monitor.name().as_deref() == Some(name));
+            if monitor.is_none() {
+                log::warn!(
+                    "ViewportCommand::SetMonitorName({name:?}): no monitor with that name; \
+                     fullscreening on the current monitor"
+                );
+            }
+            window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(monitor)));
+        }
         ViewportCommand::Decorations(v) => {
             window.set_decorations(v);
             #[cfg(target_os = "windows")]
@@ -1953,11 +1965,14 @@ pub fn create_window(
     Ok(window)
 }
 
-/// Apply [`ViewportBuilder::monitor`] to already-built [`winit::window::WindowAttributes`]:
-/// resolve the monitor index to a handle and request borderless fullscreen on that monitor,
-/// so the window is created directly on the requested output. This is the only reliable way
-/// to target a specific monitor under Wayland, and also avoids the Mutter race where
-/// `OuterPosition` is ignored pre-mapping.
+/// Apply [`ViewportBuilder::monitor`] / [`ViewportBuilder::monitor_name`] to already-built
+/// [`winit::window::WindowAttributes`]: resolve the target monitor to a handle and request
+/// borderless fullscreen on that monitor, so the window is created directly on the requested
+/// output. This is the only reliable way to target a specific monitor under Wayland, and also
+/// avoids the Mutter race where `OuterPosition` is ignored pre-mapping.
+///
+/// A name match takes precedence over the index, since `available_monitors()` order is
+/// backend-defined.
 ///
 /// [`create_window`] does this internally. Backends that construct their windows some other
 /// way (e.g. through glutin in eframe's glow backend) must call this explicitly —
@@ -1968,16 +1983,35 @@ pub fn resolve_monitor_in_window_attributes(
     event_loop: &ActiveEventLoop,
     mut window_attributes: winit::window::WindowAttributes,
 ) -> winit::window::WindowAttributes {
-    if let Some(idx) = viewport_builder.monitor {
-        if let Some(monitor) = event_loop.available_monitors().nth(idx) {
-            window_attributes = window_attributes
-                .with_fullscreen(Some(winit::window::Fullscreen::Borderless(Some(monitor))));
-        } else {
+    let mut target = None;
+
+    if let Some(name) = &viewport_builder.monitor_name {
+        target = event_loop
+            .available_monitors()
+            .find(|monitor| monitor.name().as_deref() == Some(name));
+        if target.is_none() {
+            log::warn!(
+                "ViewportBuilder::with_monitor_name({name:?}): no monitor with that name; \
+                 falling back to the monitor index, if set"
+            );
+        }
+    }
+
+    if target.is_none()
+        && let Some(idx) = viewport_builder.monitor
+    {
+        target = event_loop.available_monitors().nth(idx);
+        if target.is_none() {
             log::warn!(
                 "ViewportBuilder::with_monitor({idx}): index out of range ({} monitors available)",
                 event_loop.available_monitors().count()
             );
         }
+    }
+
+    if let Some(monitor) = target {
+        window_attributes = window_attributes
+            .with_fullscreen(Some(winit::window::Fullscreen::Borderless(Some(monitor))));
     }
     window_attributes
 }
@@ -2029,6 +2063,7 @@ pub fn create_winit_window_attributes(
         mouse_passthrough: _, // handled in `apply_viewport_builder_to_window`
         clamp_size_to_monitor_size: _, // Handled in `viewport_builder` in `epi_integration.rs`
         monitor: _, // Handled in `create_window` (needs ActiveEventLoop for monitor handle)
+        monitor_name: _, // Handled in `create_window` (needs ActiveEventLoop for monitor handle)
     } = viewport_builder;
 
     let mut window_attributes = winit::window::WindowAttributes::default()

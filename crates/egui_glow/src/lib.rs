@@ -112,6 +112,15 @@ pub enum HardwareAcceleration {
     Off,
 }
 
+/// Which OpenGL API `glutin` should try first.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ApiPreference {
+    #[default]
+    FallbackEgl,
+    PreferEgl,
+}
+
 /// Configuration for using glow with eframe or the egui-glow winit feature.
 #[derive(Clone)]
 pub struct GlowConfiguration {
@@ -126,6 +135,12 @@ pub struct GlowConfiguration {
     /// Default: [`HardwareAcceleration::Preferred`].
     #[cfg(not(target_arch = "wasm32"))]
     pub hardware_acceleration: HardwareAcceleration,
+
+    /// Which OpenGL API to try first.
+    ///
+    /// Default: [`ApiPreference::FallbackEgl`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub api_preference: ApiPreference,
 
     /// Needed for cross compiling for VirtualBox VMSVGA driver with OpenGL ES 2.0 and OpenGL 2.1 which doesn't support SRGB texture.
     /// See <https://github.com/emilk/egui/pull/1993>.
@@ -142,6 +157,8 @@ impl Default for GlowConfiguration {
             vsync: true,
             #[cfg(not(target_arch = "wasm32"))]
             hardware_acceleration: HardwareAcceleration::Preferred,
+            #[cfg(not(target_arch = "wasm32"))]
+            api_preference: ApiPreference::FallbackEgl,
             shader_version: None,
         }
     }

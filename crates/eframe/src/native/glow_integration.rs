@@ -1010,12 +1010,14 @@ impl GlutinWindowContext {
 
         log::debug!("trying to create glutin Display with config: {config_template_builder:?}");
 
+        let api_preference = match native_options.glow_options.api_preference {
+            egui_glow::ApiPreference::FallbackEgl => glutin_winit::ApiPreference::FallbackEgl,
+            egui_glow::ApiPreference::PreferEgl => glutin_winit::ApiPreference::PreferEgl,
+        };
+
         // Create GL display. This may probably create a window too on most platforms. Definitely on `MS windows`. Never on Android.
         let display_builder = glutin_winit::DisplayBuilder::new()
-            // we might want to expose this option to users in the future. maybe using an env var or using native_options.
-            //
-            // The justification for FallbackEgl over PreferEgl is at https://github.com/emilk/egui/pull/2526#issuecomment-1400229576 .
-            .with_preference(glutin_winit::ApiPreference::FallbackEgl)
+            .with_preference(api_preference)
             .with_window_attributes(Some(egui_winit::resolve_monitor_in_window_attributes(
                 &viewport_builder,
                 event_loop,

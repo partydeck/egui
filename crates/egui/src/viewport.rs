@@ -346,6 +346,9 @@ pub struct ViewportBuilder {
     /// for monitor selection: if both are set, the window will be fullscreen on
     /// the chosen monitor.
     pub monitor: Option<usize>,
+
+    /// Target monitor name for borderless fullscreen. See [`Self::with_monitor_name`].
+    pub monitor_name: Option<String>,
 }
 
 impl ViewportBuilder {
@@ -707,6 +710,17 @@ impl ViewportBuilder {
         self
     }
 
+    /// Place the window in borderless fullscreen on the monitor with this name.
+    ///
+    /// The name is matched against winit's `MonitorHandle::name()`,
+    /// so unlike [`Self::with_monitor`] it does not depend on `available_monitors()` ordering.
+    /// Takes precedence over the index, which is used as fallback if no monitor has this name.
+    #[inline]
+    pub fn with_monitor_name(mut self, name: impl Into<String>) -> Self {
+        self.monitor_name = Some(name.into());
+        self
+    }
+
     /// Update this `ViewportBuilder` with a delta,
     /// returning a list of commands and a bool indicating if the window needs to be recreated.
     #[must_use]
@@ -745,6 +759,7 @@ impl ViewportBuilder {
             window_type: new_window_type,
             override_redirect: new_override_redirect,
             monitor: new_monitor,
+            monitor_name: new_monitor_name,
         } = new_vp_builder;
 
         let mut commands = Vec::new();
@@ -788,7 +803,14 @@ impl ViewportBuilder {
             && Some(new_fullscreen) != self.fullscreen
         {
             self.fullscreen = Some(new_fullscreen);
-            commands.push(ViewportCommand::Fullscreen(new_fullscreen));
+            // `SetMonitor`/`SetMonitorName` already imply borderless fullscreen on the target monitor,
+            // emitting `Fullscreen(true)` first would fullscreen on the current monitor,
+            // which on X11 the window manager then refuses to move.
+            let monitor_changing = (new_monitor.is_some() && new_monitor != self.monitor)
+                || (new_monitor_name.is_some() && new_monitor_name != self.monitor_name);
+            if !(new_fullscreen && monitor_changing) {
+                commands.push(ViewportCommand::Fullscreen(new_fullscreen));
+            }
         }
 
         if let Some(new_maximized) = new_maximized
@@ -952,6 +974,13 @@ impl ViewportBuilder {
         {
             self.monitor = Some(new_monitor);
             commands.push(ViewportCommand::SetMonitor(new_monitor));
+        }
+
+        if let Some(new_monitor_name) = new_monitor_name
+            && Some(&new_monitor_name) != self.monitor_name.as_ref()
+        {
+            self.monitor_name = Some(new_monitor_name.clone());
+            commands.push(ViewportCommand::SetMonitorName(new_monitor_name));
         }
 
         (commands, recreate_window)
@@ -1143,8 +1172,15 @@ pub enum ViewportCommand {
     /// Move the window to borderless fullscreen on the monitor at the given index.
     ///
     /// Index refers to winit's `available_monitors()` order. If out of range, the
-    /// command is ignored (logged as a warning).
+    /// window is fullscreened on its current monitor instead, and a warning is logged.
     SetMonitor(usize),
+
+    /// Move the window to borderless fullscreen on the monitor with the given name.
+    ///
+    /// The name is matched against winit's `MonitorHandle::name()` (e.g.
+    /// `"HDMI-A-1"`). If no monitor has this name, the window is fullscreened
+    /// on its current monitor instead, and a warning is logged.
+    SetMonitorName(String),
 
     /// Show window decorations, i.e. the chrome around the content
     /// with the title bar, close buttons, resize handles, etc.

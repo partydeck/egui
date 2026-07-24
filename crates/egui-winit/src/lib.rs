@@ -1829,14 +1829,29 @@ fn process_viewport_command(
             window.set_fullscreen(v.then_some(winit::window::Fullscreen::Borderless(None)));
         }
         ViewportCommand::SetMonitor(idx) => {
-            if let Some(monitor) = window.available_monitors().nth(idx) {
-                window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(Some(monitor))));
-            } else {
+            let monitor = window.available_monitors().nth(idx);
+            if monitor.is_none() {
                 log::warn!(
-                    "ViewportCommand::SetMonitor({idx}): index out of range ({} monitors available)",
+                    "ViewportCommand::SetMonitor({idx}): index out of range ({} monitors available); \
+                     fullscreening on the current monitor",
                     window.available_monitors().count()
                 );
             }
+            // Fall back to the current monitor (here and in `SetMonitorName` below) so
+            // the fullscreen request is not lost when the target monitor is stale
+            window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(monitor)));
+        }
+        ViewportCommand::SetMonitorName(ref name) => {
+            let monitor = window
+                .available_monitors()
+                .find(|monitor| monitor.name().as_deref() == Some(name));
+            if monitor.is_none() {
+                log::warn!(
+                    "ViewportCommand::SetMonitorName({name:?}): no monitor with that name; \
+                     fullscreening on the current monitor"
+                );
+            }
+            window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(monitor)));
         }
         ViewportCommand::Decorations(v) => {
             window.set_decorations(v);
@@ -1945,25 +1960,66 @@ pub fn create_window(
 
     let mut window_attributes = create_winit_window_attributes(egui_ctx, viewport_builder.clone());
 
-    // Resolve target monitor index → MonitorHandle, so the window is created
-    // directly in borderless fullscreen on the requested output. This is the
-    // only reliable way to target a specific monitor under Wayland, and also
-    // avoids the Mutter race where OuterPosition is ignored pre-mapping.
-    if let Some(idx) = viewport_builder.monitor {
-        if let Some(monitor) = event_loop.available_monitors().nth(idx) {
-            window_attributes = window_attributes
-                .with_fullscreen(Some(winit::window::Fullscreen::Borderless(Some(monitor))));
-        } else {
+    window_attributes = resolve_monitor_in_window_attributes(viewport_builder, event_loop, window_attributes);
+
+    let window = event_loop.create_window(window_attributes)?;
+    apply_viewport_builder_to_window(egui_ctx, &window, viewport_builder);
+    Ok(window)
+}
+
+/// Resolve [`ViewportBuilder::monitor_name`] / [`ViewportBuilder::monitor`] (in that
+/// order) to a monitor and request borderless fullscreen on it, so the window is
+/// created directly on the requested output. This is the only reliable way to target
+/// a specific monitor under Wayland, and also avoids the Mutter race where
+/// OuterPosition is ignored pre-mapping.
+///
+/// If the requested monitor cannot be found, the window is still created in
+/// borderless fullscreen on a default monitor, mirroring the fallback of
+/// [`ViewportCommand::SetMonitor`] / [`ViewportCommand::SetMonitorName`].
+///
+/// [`create_window`] does this internally. Backends that create their window some
+/// other way (e.g. through glutin in eframe's glow backend) must call this on the
+/// attributes from [`create_winit_window_attributes`] themselves.
+pub fn resolve_monitor_in_window_attributes(
+    viewport_builder: &ViewportBuilder,
+    event_loop: &ActiveEventLoop,
+    mut window_attributes: winit::window::WindowAttributes,
+) -> winit::window::WindowAttributes {
+    let mut target = None;
+
+    if let Some(name) = &viewport_builder.monitor_name {
+        target = event_loop
+            .available_monitors()
+            .find(|monitor| monitor.name().as_deref() == Some(name));
+        if target.is_none() {
             log::warn!(
-                "ViewportBuilder::with_monitor({idx}): index out of range ({} monitors available)",
+                "ViewportBuilder::with_monitor_name({name:?}): no monitor with that name; \
+                 falling back to the monitor index, if set, or a default monitor"
+            );
+        }
+    }
+
+    if target.is_none()
+        && let Some(idx) = viewport_builder.monitor
+    {
+        target = event_loop.available_monitors().nth(idx);
+        if target.is_none() {
+            log::warn!(
+                "ViewportBuilder::with_monitor({idx}): index out of range ({} monitors available); \
+                 fullscreening on a default monitor",
                 event_loop.available_monitors().count()
             );
         }
     }
 
-    let window = event_loop.create_window(window_attributes)?;
-    apply_viewport_builder_to_window(egui_ctx, &window, viewport_builder);
-    Ok(window)
+    if viewport_builder.monitor_name.is_some() || viewport_builder.monitor.is_some() {
+        // `target` is `None` when the requested monitor was not found, still go
+        // borderless fullscreen (winit picks the monitor) so the request is not
+        // lost, mirroring the `SetMonitor`/`SetMonitorName` command fallback.
+        window_attributes = window_attributes
+            .with_fullscreen(Some(winit::window::Fullscreen::Borderless(target)));
+    }
+    window_attributes
 }
 
 pub fn create_winit_window_attributes(
@@ -2012,7 +2068,8 @@ pub fn create_winit_window_attributes(
 
         mouse_passthrough: _, // handled in `apply_viewport_builder_to_window`
         clamp_size_to_monitor_size: _, // Handled in `viewport_builder` in `epi_integration.rs`
-        monitor: _, // Handled in `create_window` (needs ActiveEventLoop for monitor handle)
+        monitor: _, // Handled in `resolve_monitor_in_window_attributes` (needs ActiveEventLoop)
+        monitor_name: _, // Handled in `resolve_monitor_in_window_attributes` (needs ActiveEventLoop)
     } = viewport_builder;
 
     let mut window_attributes = winit::window::WindowAttributes::default()

@@ -1016,9 +1016,10 @@ impl GlutinWindowContext {
             //
             // The justification for FallbackEgl over PreferEgl is at https://github.com/emilk/egui/pull/2526#issuecomment-1400229576 .
             .with_preference(glutin_winit::ApiPreference::FallbackEgl)
-            .with_window_attributes(Some(egui_winit::create_winit_window_attributes(
-                egui_ctx,
-                viewport_builder.clone(),
+            .with_window_attributes(Some(egui_winit::resolve_monitor_in_window_attributes(
+                &viewport_builder,
+                event_loop,
+                egui_winit::create_winit_window_attributes(egui_ctx, viewport_builder.clone()),
             )));
 
         let (window, gl_config) = {
@@ -1186,6 +1187,11 @@ impl GlutinWindowContext {
             let window_attributes = egui_winit::create_winit_window_attributes(
                 &self.egui_ctx,
                 viewport.builder.clone(),
+            );
+            let window_attributes = egui_winit::resolve_monitor_in_window_attributes(
+                &viewport.builder,
+                event_loop,
+                window_attributes,
             );
             if window_attributes.transparent()
                 && self.gl_config.supports_transparency() == Some(false)

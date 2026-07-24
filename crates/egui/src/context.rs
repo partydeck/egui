@@ -168,6 +168,23 @@ impl ContextImpl {
         }
     }
 
+    fn request_repaint_once(&mut self, viewport_id: ViewportId, cause: RepaintCause) {
+        let viewport = self.viewports.entry(viewport_id).or_default();
+        viewport.repaint.causes.push(cause);
+
+        if Duration::ZERO < viewport.repaint.repaint_delay {
+            viewport.repaint.repaint_delay = Duration::ZERO;
+
+            if let Some(callback) = &self.request_repaint_callback {
+                (callback)(RequestRepaintInfo {
+                    viewport_id,
+                    delay: Duration::ZERO,
+                    current_cumulative_pass_nr: viewport.repaint.cumulative_pass_nr,
+                });
+            }
+        }
+    }
+
     #[must_use]
     fn requested_immediate_repaint_prev_pass(&self, viewport_id: &ViewportId) -> bool {
         self.viewports
@@ -1847,6 +1864,17 @@ impl Context {
     pub fn request_repaint_after_for(&self, duration: Duration, id: ViewportId) {
         let cause = RepaintCause::new();
         self.write(|ctx| ctx.request_repaint_after(duration, id, cause));
+    }
+
+    /// Request exactly one repaint of the given viewport, as soon as possible.
+    ///
+    /// Unlike [`Self::request_repaint_of`], this does not schedule a second "settle" repaint after the requested one, 
+    /// and unlike [`Self::request_repaint_after_for`] the delay is not reduced by the predicted frame time. 
+    /// Useful for external frame sources where each new frame should cost exactly one pass.
+    #[track_caller]
+    pub fn request_repaint_once_for(&self, id: ViewportId) {
+        let cause = RepaintCause::new();
+        self.write(|ctx| ctx.request_repaint_once(id, cause));
     }
 
     /// Was a repaint requested last pass for the current viewport?

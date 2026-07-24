@@ -759,6 +759,7 @@ impl GlowWinitRunning<'_> {
                     )
                 })?;
 
+                window.pre_present_notify();
                 gl_surface.swap_buffers(context)?;
                 frame_timer.resume();
             }
@@ -1634,6 +1635,7 @@ fn render_immediate_viewport(
 
     {
         profiling::scope!("swap_buffers");
+        window.pre_present_notify();
         if let Err(err) = gl_surface.swap_buffers(current_gl_context) {
             log::error!("swap_buffers failed: {err}");
         }
